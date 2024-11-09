@@ -21,4 +21,30 @@ public static class HtmlHelper
 
         return document;
     }
+
+    internal static Dictionary<string, string> GetAttributeAndTextValuesFromNodeCollection(string html, string collectionXpath, string singleXPath, string attributeName = "value")
+    {
+        var values = new Dictionary<string, string>();
+        var document = LoadHtmlDocument(html);
+        var nodeCollection = document.DocumentNode.SelectNodes(collectionXpath);
+
+        foreach (var node in nodeCollection)
+        {
+            var singleNode = node.SelectSingleNode(singleXPath);
+            var attributeValue = singleNode?.GetAttributeValue(attributeName, "").Trim();
+
+            if (string.IsNullOrWhiteSpace(attributeValue))
+            {
+                continue;
+            }
+
+            var texValues = string.Join(" ", node.ChildNodes
+                .Where(n => n != singleNode && !string.IsNullOrWhiteSpace(n.InnerText))
+                .Select(n => n.InnerText.Trim()));
+
+            values.Add(attributeValue, texValues);
+        }
+
+        return values;
+    }
 }

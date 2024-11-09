@@ -24,7 +24,8 @@ try
     await HandleAuthentication();
 
     var staffList = await cvService.GetAllStaff();
-    var cvList = await Task.WhenAll(staffList.Select(s => cvService.GetCv(s.PersonEntityId)));
+
+    var cvList = await Task.WhenAll(staffList.Take(3).Select(s => cvService.GetCv(s.PersonEntityId, s.RegistrationId)));
 
     foreach (var cv in cvList)
     {
