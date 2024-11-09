@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="FreeSpire.PDF" Version="10.2.0" />
     <PackageReference Include="HtmlAgilityPack" Version="1.11.70" />
   </ItemGroup>
 

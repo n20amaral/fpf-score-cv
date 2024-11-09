@@ -1,7 +1,9 @@
 ﻿using System.Net;
+using System.Text.Json;
 
 var DEBUG_MODE = args.LastOrDefault() == "DEBUG";
 var CV_PATH = args.Any() ? args[0] : "CV.pdf";
+var JSON_PATH = "collection.json";
 
 var cookieContainer = new CookieContainer();
 var handler = new SocketsHttpHandler
@@ -19,31 +21,65 @@ var cvService = new CvService(httpClient);
 var pdfService = new PdfService(CV_PATH);
 
 
-try
+// try
+// {
+var cvList = new List<Cv>();
+if (!File.Exists(JSON_PATH))
 {
     await HandleAuthentication();
-
     var staffList = await cvService.GetAllStaff();
 
-    var cvList = await Task.WhenAll(staffList.Take(3).Select(s => cvService.GetCv(s.PersonEntityId, s.RegistrationId)));
 
-    foreach (var cv in cvList)
+    foreach (var staff in staffList
+        .GroupBy(s => s.PersonEntityId)
+        .Select(g => new { PersonId = g.Key, LastRegistrationId = g.Max(s => s.RegistrationId), Roles = g.Select(s => s.FunctionName) }))
     {
-        pdfService.GeneratePdf(cv);
+        Console.WriteLine($"Getting CV data for: {staff.PersonId}");
+        await Task.Delay(1000);
+        var cv = await cvService.GetCv(staff.PersonId, staff.LastRegistrationId, staff.Roles);
+        cvList.Add(cv);
+        Console.WriteLine($"{cv.PersonalData.Name} is done: {string.Join(',', cv.StaffAssignment.Roles)} with {cv.SportsQualifications.Count()} experiences");
     }
+
+    await SaveToFile(cvList);
+    Console.WriteLine($"{cvList.Count} cvs saved");
 }
-catch (Exception ex)
+else
 {
-    if (DEBUG_MODE)
-    {
-        Console.Write(ex.Message);
-    }
+    cvList = await LoadFromFile();
+}
 
-    var errorMessage = ex.Message.StartsWith("FSCV") ?
-        ex.Message.Replace("FSCV", "ERROR") :
-        "ERROR: Something went wrong..";
+foreach (var cv in cvList)
+{
+    pdfService.GeneratePdf(cv);
+}
+//}
+// catch (Exception ex)
+// {
+//     if (DEBUG_MODE)
+//     {
+//         Console.Write(ex.Message);
+//     }
 
-    Console.WriteLine(errorMessage);
+//     var errorMessage = ex.Message.StartsWith("FSCV") ?
+//         ex.Message.Replace("FSCV", "ERROR") :
+//         "ERROR: Something went wrong..";
+
+//     Console.WriteLine(errorMessage);
+//     throw;
+// }
+
+async Task SaveToFile(List<Cv> cvs)
+{
+    var options = new JsonSerializerOptions { WriteIndented = true };
+    string jsonString = JsonSerializer.Serialize(cvs, options);
+    await File.WriteAllTextAsync(JSON_PATH, jsonString);
+}
+
+async Task<List<Cv>> LoadFromFile()
+{
+    string jsonString = await File.ReadAllTextAsync(JSON_PATH);
+    return JsonSerializer.Deserialize<List<Cv>>(jsonString) ?? [];
 }
 
 async Task HandleAuthentication()

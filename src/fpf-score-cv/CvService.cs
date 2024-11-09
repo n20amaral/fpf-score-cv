@@ -8,14 +8,15 @@ public class CvService
     public const string STAFF_URL = "InscricoesDirigentes/Process";
     private const string STAFF_LIST_URL = "InscricoesDirigentes/Process/GetProcessList?token=undefined";
     private const string STAFF_DETAILS_URL = "InscricoesDirigentes/Process/Detail";
+    private const string STAFF_HISTORY_URL = "InscricoesDirigentes/Process/GetRegistrationHistory";
     private HttpClient _httpClient;
-    private string _token;
+    private string _token = string.Empty;
     private Header _header;
 
     public CvService(HttpClient httpClient)
     {
-        this._httpClient = httpClient;
-        _header = new Header("FCF", "AFH", "2024", "2025");
+        _httpClient = httpClient;
+        _header = new Header("Futebol Clube dos Flamengos", "Associação de Futebol da Horta", "2024", "2025");
     }
 
     internal async Task<IEnumerable<StaffMember>> GetAllStaff()
@@ -35,7 +36,7 @@ public class CvService
             {"columns[1][search][value]",ASSOCIATION_ENTITY_ID},
             {"columns[1][search][regex]","false"},
             {"start","0"},
-            {"length","20"},
+            {"length","50"},
             {"search[value]",""},
             {"search[regex]","false"},
             {"seasonId",SEASON_ID},
@@ -52,7 +53,7 @@ public class CvService
         return result.Data;
     }
 
-    internal async Task<Cv> GetCv(int personEntityId, int registrationId)
+    internal async Task<Cv> GetCv(int personEntityId, int registrationId, IEnumerable<string> roles)
     {
         var staffDetails = await GetStaffDetails(registrationId);
 
@@ -65,8 +66,6 @@ public class CvService
         staffDetails.TryGetValue("Location", out var location);
         staffDetails.TryGetValue("ZipCodeId", out var zip);
         staffDetails.TryGetValue("SubEntityTypeId", out var subEntity);
-        staffDetails.TryGetValue("FunctionName", out var functionName);
-
 
         var hasDateOfBirth = DateOnly.TryParseExact(birth, "dd-MM-yyyy", out var dateOfBirth);
         var hasRegistrationDate = DateOnly.TryParseExact(registration, "dd-MM-yyyy", out var registrationDate);
@@ -89,16 +88,21 @@ public class CvService
         (
             Department: subEntity ?? string.Empty,
             StartDate: hasRegistrationDate ? registrationDate : null,
-            Roles: new string[6] { functionName ?? string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty }
+            Roles: roles.Take(6)
         );
 
-        return new Cv
+        var cv = new Cv
         {
             Header = _header,
             PersonalData = personalData,
             StaffAssignment = staffAssignment
         };
 
+        var maxHistoryRecords = cv.SportsQualifications.Count();
+        var staffHistory = await GetStaffHistory(personEntityId, maxHistoryRecords);
+        cv.SportsQualifications = staffHistory;
+
+        return cv;
     }
 
     private async Task<Dictionary<string, string>> GetStaffDetails(int registrationId)
@@ -109,23 +113,44 @@ public class CvService
         return HtmlHelper.GetAttributeAndTextValuesFromNodeCollection(staffDetailsPage, "//div[contains(@class, 'form-field-row') and contains(@class, 'ffr-four-columns')]", ".//label", "for");
     }
 
-    private async Task<HttpResponseMessage> PostWithToken(string requestUri, HttpContent content)
+    private async Task<IEnumerable<ProfessionalExperience>> GetStaffHistory(int personEntityId, int maxHistoryRecords)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, STAFF_LIST_URL);
-        request.Headers.Add("__RequestVerificationToken", await GetToken());
+        var historyPayload = new FormUrlEncodedContent(new Dictionary<string, string> {
+            {"draw","2"},
+            {"order[0][column]", "1"},
+            {"order[0][dir]", "desc"},
+            {"start", "0"},
+            {"length", "10"},
+            {"search[value]", ""},
+            {"search[regex]", "false"}
+        });
+        var postStaffHistory = await PostWithToken($"{STAFF_HISTORY_URL}?personEntityId={personEntityId}", historyPayload);
+        var staffHistoryResult = await postStaffHistory.Content.ReadFromJsonAsync<StaffHistoryResult>();
+
+        return staffHistoryResult?.Data?.Data.Select(h =>
+            {
+                var seasons = h.SeasonName.Split('-');
+                var starDate = int.TryParse(seasons.FirstOrDefault(), out var starYear) ? new DateOnly(starYear, 8, 1) : DateOnly.MinValue;
+                var endDate = int.TryParse(seasons.LastOrDefault(), out var endYear) ? new DateOnly(endYear, 6, 30) : DateOnly.MaxValue;
+
+                return new ProfessionalExperience(h.EntityName, h.FunctionName, starDate, endDate);
+            })
+        .OrderByDescending(h => h.EndDate)
+        .Take(maxHistoryRecords) ?? [];
+    }
+
+    private async Task<HttpResponseMessage> PostWithToken(string requestUri, HttpContent content, string tokenUrl = STAFF_URL)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, requestUri);
+        request.Headers.Add("__RequestVerificationToken", await GetToken(tokenUrl));
         request.Content = content;
 
         return await _httpClient.SendAsync(request);
     }
 
-    private async Task<string> GetToken()
+    private async Task<string> GetToken(string tokenUrl = STAFF_URL)
     {
-        if (!string.IsNullOrWhiteSpace(_token))
-        {
-            return _token;
-        }
-
-        var getStaff = await _httpClient.GetAsync(STAFF_URL);
+        var getStaff = await _httpClient.GetAsync(tokenUrl);
         var staffPage = await getStaff.Content.ReadAsStringAsync();
 
         return HtmlHelper.GetSingleNodeAttributeValue(staffPage, "//*[@id=\"logoutForm\"]/input");
