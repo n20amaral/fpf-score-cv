@@ -1,15 +1,14 @@
-﻿
-using System.Net;
+﻿using System.Net;
 
 var DEBUG_MODE = args.LastOrDefault() == "DEBUG";
-var CV_PATH = args[0];
+var CV_PATH = args.Any() ? args[0] : "CV.pdf";
 
 var cookieContainer = new CookieContainer();
 var handler = new SocketsHttpHandler
 {
     CookieContainer = cookieContainer,
     UseCookies = true,
-    AllowAutoRedirect = false,
+    AllowAutoRedirect = true,
 };
 
 var httpClient = new HttpClient(handler, disposeHandler: false);
@@ -22,7 +21,7 @@ var pdfService = new PdfService(CV_PATH);
 
 try
 {
-    HandleAuthentication();
+    await HandleAuthentication();
 
     var staffList = await cvService.GetAllStaff();
     var cvList = await Task.WhenAll(staffList.Select(s => cvService.GetCv(s.PersonEntityId)));
@@ -37,7 +36,6 @@ catch (Exception ex)
     if (DEBUG_MODE)
     {
         Console.Write(ex.Message);
-        return;
     }
 
     var errorMessage = ex.Message.StartsWith("FSCV") ?
@@ -47,12 +45,17 @@ catch (Exception ex)
     Console.WriteLine(errorMessage);
 }
 
-void HandleAuthentication()
+async Task HandleAuthentication()
 {
     var username = GetStringInput("Username");
-    var password = GetSecureStringInput("Password");
+    var password = GetStringInput("Password");
 
-    var token = authService.Authenticate(username, password);
+    var (userId, token) = await authService.Authenticate(username, password);
+
+    if (DEBUG_MODE)
+    {
+        Console.WriteLine($"userId: {userId}\ntoken: {token}");
+    }
 
     if (string.IsNullOrWhiteSpace(token))
     {
@@ -61,7 +64,7 @@ void HandleAuthentication()
 
     var confirmationCode = GetStringInput("Confirmation Code");
 
-    var isConfirmed = authService.ConfirmCode(confirmationCode, token);
+    var isConfirmed = await authService.ConfirmCode(confirmationCode, userId, token);
 
     if (!isConfirmed)
     {
@@ -80,37 +83,4 @@ string GetStringInput(string prompt)
     }
 
     return input;
-}
-
-string GetSecureStringInput(string prompt)
-{
-    Console.Write($"{prompt}: ");
-
-    var password = string.Empty;
-    ConsoleKeyInfo keyInfo;
-
-    do
-    {
-        keyInfo = Console.ReadKey(intercept: true);
-        if (keyInfo.Key == ConsoleKey.Enter)
-        {
-            Console.WriteLine();
-            break;
-        }
-        else if (keyInfo.Key == ConsoleKey.Backspace)
-        {
-            if (password.Length > 0)
-            {
-                password = password[0..^1];
-                Console.Write("\b \b");
-            }
-        }
-        else
-        {
-            password += keyInfo.KeyChar;
-            Console.Write("*");
-        }
-    } while (true);
-
-    return password;
 }
